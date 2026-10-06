@@ -64,6 +64,7 @@ import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { isStatementTimeout } from '~/server/utils/statement-timeout';
 import {
   FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
   MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
@@ -1702,6 +1703,7 @@ function applyHideChallengesExclusion(input: {
 const getAllImagesUncaptured = async (
   input: GetAllImagesInput & {
     userId?: number;
+    throwOnStatementTimeout?: boolean;
   }
 ) => {
   // Fail loud rather than serve unfiltered. This path has no way to express a
@@ -2477,19 +2479,8 @@ const getAllImagesUncaptured = async (
       cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags })
     );
   } catch (e) {
-    const code = (e as { code?: string })?.code;
-    const message = (e as { message?: string })?.message ?? '';
-    // SQLSTATE 57014 (query_canceled) is shared by statement_timeout,
-    // pg_cancel_backend(), and client AbortSignal cancellation. Only the
-    // first should fall back to an empty page — the others must propagate
-    // so callers/observers see the cancellation. Postgres distinguishes
-    // them via the error message: "canceling statement due to statement timeout".
-    if (code === '57014' && message.includes('statement timeout')) {
-      // Query exceeded IMAGE_FEED_STATEMENT_TIMEOUT_MS on the replica.
-      // Return an empty page instead of surfacing a 500 — the feed is best-effort
-      // and the UI handles `items: []` gracefully. Log to axiom so we can track
-      // frequency and identify pathological filter combinations; also bump a
-      // counter so we can alert if the rate climbs.
+    if (isStatementTimeout(e)) {
+      // Feeds can accept an empty page; detail responses opt in to retryable failures.
       imageFeedStatementTimeoutCounter.inc({ dbTarget });
       logToAxiom({
         name: 'getInfiniteImages:statement_timeout',
@@ -2513,6 +2504,7 @@ const getAllImagesUncaptured = async (
         },
       }).catch(() => undefined);
       noteEmptyIdsPage(input, 'statement-timeout', { dbTarget });
+      if (input.throwOnStatementTimeout) throw e;
       return { items: [], nextCursor: undefined };
     }
     throw e;

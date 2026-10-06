@@ -59,6 +59,8 @@ export type RunImageSearchInput = {
    * the same thing.
    */
   postOrder?: boolean;
+  /** Propagate DB statement timeouts instead of returning a best-effort empty page. */
+  throwOnStatementTimeout?: boolean;
   /** The remaining `...data` fields off the parsed schema (postId/modelId/username/etc). */
   data: Record<string, unknown>;
 };
@@ -130,7 +132,18 @@ export async function runImageSearch(
   ctx: RunImageSearchContext
 ): Promise<{ items: ShapedImage[]; nextCursor?: string }> {
   const { browsingLevel, user, req } = ctx;
-  const { limit, skip, cursor, type, withMeta, flatMeta, withTags, postOrder, data } = input;
+  const {
+    limit,
+    skip,
+    cursor,
+    type,
+    withMeta,
+    flatMeta,
+    withTags,
+    postOrder,
+    throwOnStatementTimeout,
+    data,
+  } = input;
 
   const features = getFeatureFlags({ user, req });
 
@@ -237,6 +250,7 @@ export async function runImageSearch(
   const { items, nextCursor } = useLegacyMethod
     ? await getAllImages({
         ...data,
+        throwOnStatementTimeout,
         types: type ? [type] : undefined,
         limit,
         skip,
