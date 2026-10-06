@@ -13,6 +13,7 @@ const {
   mockRateLimit,
   mockGetRegion,
   mockIsRegionRestricted,
+  mockGetEdgeUrl,
 } = vi.hoisted(() => ({
   mockGetAllCollections: vi.fn(),
   mockGetCollectionItemCount: vi.fn(),
@@ -21,6 +22,7 @@ const {
   mockRateLimit: vi.fn(),
   mockGetRegion: vi.fn(),
   mockIsRegionRestricted: vi.fn(),
+  mockGetEdgeUrl: vi.fn((url: string) => `edge:${url}`),
 }));
 
 vi.mock('~/server/services/collection.service', () => ({
@@ -35,14 +37,11 @@ vi.mock('~/server/utils/public-api-rate-limit', () => ({
 }));
 
 vi.mock('~/client-utils/edge-url', () => ({
-  getEdgeUrl: (url: string) => `edge:${url}`,
+  getEdgeUrl: mockGetEdgeUrl,
 }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  MixedAuthEndpoint:
-    (handler: any) =>
-    (req: any, res: any) =>
-      handler(req, res, req.user),
+  MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, req.user),
   handleEndpointError: (res: any, e: any) => {
     if (e instanceof TRPCError) {
       const status = getHTTPStatusCodeFromError(e);
@@ -58,9 +57,6 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   },
 }));
 
-// Region resolver kept deterministic — the maturity clamp is derived ONLY from
-// these helpers (never from the caller). Default: not restricted → PUBLIC flag.
-// Individual tests flip `mockIsRegionRestricted` to exercise the SFW narrowing.
 vi.mock('~/server/utils/region-blocking', () => ({
   getRegion: mockGetRegion,
   isRegionRestricted: mockIsRegionRestricted,
@@ -173,7 +169,10 @@ describe('GET /api/v1/collections (list)', () => {
     const anon = createMocks({ query: { limit: '5' } });
     await listHandler(anon.req, anon.res);
 
-    const authed = createMocks({ query: { limit: '5' }, user: { id: 42, username: 'me', isModerator: true } });
+    const authed = createMocks({
+      query: { limit: '5' },
+      user: { id: 42, username: 'me', isModerator: true },
+    });
     await listHandler(authed.req, authed.res);
 
     expect(anon.res._getStatusCode()).toBe(200);
@@ -259,7 +258,19 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
       read: CollectionReadConfiguration.Public,
       userId: 2,
       user: { id: 2, username: 'bob' },
-      image: { url: 'img-key', type: 'image', nsfwLevel: 1 },
+      image: {
+        id: 99,
+        width: 1200,
+        height: 800,
+        ingestion: 'Scanned',
+        scannedAt: new Date(),
+        tosViolation: false,
+        needsReview: null,
+        blockedFor: null,
+        url: 'img-key',
+        type: 'image',
+        nsfwLevel: 1,
+      },
       tags: [{ id: 3, name: 'tag', filterableOnly: false }],
     });
     const { req, res } = createMocks({ query: { id: '55' } });
@@ -273,12 +284,21 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
       name: 'pub',
       isPublic: true,
       coverImageUrl: 'edge:img-key',
+      coverImage: {
+        id: 99,
+        url: 'edge:img-key',
+        type: 'image',
+        width: 1200,
+        height: 800,
+        nsfwLevel: 1,
+      },
+      mode: null,
       user: { id: 2, username: 'bob' },
       tags: [{ id: 3, name: 'tag' }],
     });
   });
 
-  it('MATURITY: nulls the cover URL when the cover is above the region-narrowed PUBLIC ceiling (mature cover never leaked; NOT allBrowsingLevels)', async () => {
+  it('MATURITY: nulls the cover URL when the cover is above the configured PUBLIC ceiling (mature cover never leaked; NOT allBrowsingLevels)', async () => {
     mockGetUserCollectionPermissionsById.mockResolvedValue({
       read: true,
       write: false,
@@ -293,7 +313,19 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
       read: CollectionReadConfiguration.Public,
       userId: 2,
       user: { id: 2, username: 'bob' },
-      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.R },
+      image: {
+        id: 99,
+        width: 1200,
+        height: 800,
+        ingestion: 'Scanned',
+        scannedAt: new Date(),
+        tosViolation: false,
+        needsReview: null,
+        blockedFor: null,
+        url: 'img-key',
+        type: 'image',
+        nsfwLevel: NsfwLevel.R,
+      },
       tags: [],
     });
     const { req, res } = createMocks({ query: { id: '55' } });
@@ -321,7 +353,19 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
       read: CollectionReadConfiguration.Public,
       userId: 2,
       user: { id: 2, username: 'bob' },
-      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.R },
+      image: {
+        id: 99,
+        width: 1200,
+        height: 800,
+        ingestion: 'Scanned',
+        scannedAt: new Date(),
+        tosViolation: false,
+        needsReview: null,
+        blockedFor: null,
+        url: 'img-key',
+        type: 'image',
+        nsfwLevel: NsfwLevel.R,
+      },
       tags: [],
     }));
 
@@ -352,7 +396,19 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
       read: CollectionReadConfiguration.Public,
       userId: 2,
       user: { id: 2, username: 'bob' },
-      image: { url: 'img-key', type: 'image', nsfwLevel: NsfwLevel.PG13 },
+      image: {
+        id: 99,
+        width: 1200,
+        height: 800,
+        ingestion: 'Scanned',
+        scannedAt: new Date(),
+        tosViolation: false,
+        needsReview: null,
+        blockedFor: null,
+        url: 'img-key',
+        type: 'image',
+        nsfwLevel: NsfwLevel.PG13,
+      },
       tags: [],
     });
     const { req, res } = createMocks({ query: { id: '55' } });
@@ -362,6 +418,177 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
     // Restricted → SFW ceiling (PG + PG-13) → the PG-13 cover survives, proving
     // the clamp tracks the region helper (not a fixed max, not a per-user value).
     expect(res._getJSONData().coverImageUrl).toBe('edge:img-key');
+  });
+
+  it.each(['Model', 'Article', 'Post', 'Image', 'Model3D', null])(
+    'returns the shared metadata contract for collection type %s',
+    async (type) => {
+      mockGetUserCollectionPermissionsById.mockResolvedValue({ read: true });
+      mockGetCollectionById.mockResolvedValue({
+        id: 55,
+        name: 'Examples',
+        description: 'A collection description.',
+        type,
+        mode: 'Contest',
+        read: CollectionReadConfiguration.Unlisted,
+        nsfwLevel: 1,
+        image: null,
+        userId: 2,
+        tags: [{ id: 3, name: 'Portraits', filterableOnly: true }],
+      });
+      const { req, res } = createMocks({ query: { id: '55' } });
+
+      await detailHandler(req, res);
+
+      expect(res._getJSONData()).toMatchObject({
+        type,
+        mode: 'Contest',
+        description: 'A collection description.',
+        read: CollectionReadConfiguration.Unlisted,
+        isPublic: false,
+        tags: [{ id: 3, name: 'Portraits' }],
+        coverImage: null,
+        coverImageUrl: null,
+      });
+      expect(mockGetUserCollectionPermissionsById).toHaveBeenCalledWith({ id: 55 });
+    }
+  );
+
+  it.each(['Contest', 'Bookmark', null])('preserves collection mode %s', async (mode) => {
+    mockGetUserCollectionPermissionsById.mockResolvedValue({ read: true });
+    mockGetCollectionById.mockResolvedValue({
+      id: 55,
+      name: 'Examples',
+      mode,
+      read: CollectionReadConfiguration.Public,
+      userId: 2,
+      image: null,
+      tags: [],
+    });
+    const { req, res } = createMocks({ query: { id: '55' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getJSONData().mode).toBe(mode);
+  });
+
+  it.each([
+    { ingestion: 'Pending' },
+    { ingestion: 'Rescan' },
+    { ingestion: 'Blocked' },
+    { scannedAt: null },
+    { nsfwLevel: 0 },
+    { nsfwLevel: NsfwLevel.Blocked },
+    { nsfwLevel: NsfwLevel.PG | NsfwLevel.Blocked },
+    { nsfwLevel: NsfwLevel.R },
+    { needsReview: 'review' },
+    { needsReview: '' },
+    { tosViolation: true },
+    { blockedFor: 'blocked' },
+    { blockedFor: '' },
+    { type: 'audio' },
+  ])('does not expose an unsafe cover despite a safe collection bucket: %o', async (override) => {
+    mockGetUserCollectionPermissionsById.mockResolvedValue({ read: true });
+    mockGetCollectionById.mockResolvedValue({
+      id: 55,
+      name: 'Examples',
+      nsfwLevel: NsfwLevel.PG,
+      read: CollectionReadConfiguration.Public,
+      userId: 2,
+      tags: [],
+      image: {
+        id: 99,
+        url: 'img-key',
+        type: 'image',
+        width: 1200,
+        height: 800,
+        nsfwLevel: NsfwLevel.PG,
+        ingestion: 'Scanned',
+        scannedAt: new Date(),
+        tosViolation: false,
+        needsReview: null,
+        blockedFor: null,
+        ...override,
+      },
+    });
+    const { req, res } = createMocks({ query: { id: '55' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    expect(res._getJSONData()).toMatchObject({ coverImage: null, coverImageUrl: null });
+    expect(mockGetEdgeUrl).not.toHaveBeenCalled();
+  });
+
+  it('returns video metadata without changing the legacy media URL convention', async () => {
+    mockGetUserCollectionPermissionsById.mockResolvedValue({ read: true });
+    mockGetCollectionById.mockResolvedValue({
+      id: 55,
+      name: 'Examples',
+      read: CollectionReadConfiguration.Public,
+      nsfwLevel: 29,
+      userId: 2,
+      tags: [],
+      image: {
+        id: 99,
+        url: 'video-key',
+        type: 'video',
+        width: 1920,
+        height: 1080,
+        nsfwLevel: NsfwLevel.PG,
+        ingestion: 'Scanned',
+        scannedAt: new Date(),
+        tosViolation: false,
+        needsReview: null,
+        blockedFor: null,
+      },
+    });
+    const { req, res } = createMocks({ query: { id: '55' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getJSONData().coverImage).toEqual({
+      id: 99,
+      url: 'edge:video-key',
+      type: 'video',
+      width: 1920,
+      height: 1080,
+      nsfwLevel: NsfwLevel.PG,
+    });
+    expect(res._getJSONData().coverImageUrl).toBe('edge:video-key');
+    expect(mockGetEdgeUrl.mock.calls).toEqual([['video-key', { width: 450, type: 'video' }]]);
+  });
+
+  it('keeps a permitted cover when its original dimensions are unknown', async () => {
+    mockGetUserCollectionPermissionsById.mockResolvedValue({ read: true });
+    mockGetCollectionById.mockResolvedValue({
+      id: 55,
+      name: 'Examples',
+      read: CollectionReadConfiguration.Public,
+      userId: 2,
+      tags: [],
+      image: {
+        id: 99,
+        url: 'img-key',
+        type: 'image',
+        width: null,
+        height: null,
+        nsfwLevel: NsfwLevel.PG,
+        ingestion: 'Scanned',
+        scannedAt: new Date(),
+        tosViolation: false,
+        needsReview: null,
+        blockedFor: null,
+      },
+    });
+    const { req, res } = createMocks({ query: { id: '55' } });
+
+    await detailHandler(req, res);
+
+    expect(res._getJSONData()).toMatchObject({
+      coverImage: { id: 99, width: null, height: null, nsfwLevel: NsfwLevel.PG },
+      coverImageUrl: 'edge:img-key',
+    });
   });
 
   it('404s (via handleEndpointError) when the collection row is gone despite a permission grant', async () => {
