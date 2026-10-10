@@ -43,6 +43,9 @@ const live = vi.hoisted(() => ({
   getTeamPoints: vi.fn(),
 }));
 vi.mock('~/server/events/points/read', () => live);
+// The engine's kill switch. Default: on.
+const engineSwitch = vi.hoisted(() => ({ isEventPointsEnabled: vi.fn() }));
+vi.mock('~/server/events/points/enabled', () => engineSwitch);
 
 vi.mock('~/server/events', () => ({ eventEngine: engine }));
 // The real cosmeticScoreKey: the service joins scores to hats with it.
@@ -111,6 +114,7 @@ beforeEach(() => {
   scoring.getCosmeticScores.mockResolvedValue({});
   live.getHatPoints.mockResolvedValue({});
   live.getTeamPoints.mockResolvedValue({});
+  engineSwitch.isEventPointsEnabled.mockResolvedValue(true);
   caches.worn.fetch.mockResolvedValue({});
   caches.visible.fetch.mockResolvedValue({});
   covers.mockResolvedValue([]);
@@ -504,6 +508,17 @@ describe('getEventStandings decoration', () => {
     ]);
     expect(res.history).toBe(history);
     expect(live.getTeamPoints).toHaveBeenCalledWith({ ...season, teams: scored.teams });
+    // The page says so, rather than calling live totals hourly.
+    expect(res.liveTotals).toBe(true);
+  });
+
+  // Kill switch off: the totals are still read live, but nothing earns, so they are not "live".
+  it('does not call the totals live while the engine is switched off', async () => {
+    live.getTeamPoints.mockResolvedValue({ Yellow: 950 });
+    engineSwitch.isEventPointsEnabled.mockResolvedValue(false);
+    const res = await service.getEventStandings({ event: 'birthday2026', viewer });
+    expect(live.getTeamPoints).toHaveBeenCalled();
+    expect(res.liveTotals).toBe(false);
   });
 
   // After the end the page names a winner: it must be the settled one the prize payout reads.
@@ -522,6 +537,7 @@ describe('getEventStandings decoration', () => {
     const res = await service.getEventStandings({ event: 'birthday2026', viewer, onDegraded });
     expect(res.teams).toEqual(teams);
     expect(live.getTeamPoints).not.toHaveBeenCalled();
+    expect(res.liveTotals).toBe(false);
     // Settled by design, not a fallback: the answer stays edge-cacheable.
     expect(onDegraded).not.toHaveBeenCalled();
   });
@@ -547,6 +563,7 @@ describe('getEventStandings decoration', () => {
     const onDegraded = vi.fn();
     const res = await service.getEventStandings({ event: 'birthday2026', viewer, onDegraded });
     expect(res.teams).toEqual(teams);
+    expect(res.liveTotals).toBe(false);
     expect(onDegraded).toHaveBeenCalledTimes(1);
   });
 
