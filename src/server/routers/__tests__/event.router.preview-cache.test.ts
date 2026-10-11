@@ -29,6 +29,8 @@ const { access, service } = vi.hoisted(() => {
       getEventContributors: ok(),
       getEventStandings: ok(),
       getEventCosmeticScores: ok(),
+      getWornEventHat: ok(),
+      getTeamRoster: ok(),
     },
   };
 });
@@ -85,6 +87,8 @@ const ROUTES = {
   getDonors: 'getEventContributors',
   getStandings: 'getEventStandings',
   getCosmeticScores: 'getEventCosmeticScores',
+  getWornHat: 'getWornEventHat',
+  getTeamRoster: 'getTeamRoster',
 } as const;
 // getData's edgeCacheIt is commented out, so it is gated but never edge-cached.
 const EDGE_CACHED = Object.keys(ROUTES).filter((r) => r !== 'getData');
@@ -101,7 +105,13 @@ const rootCtx = (user?: Ctx['user']): Ctx => ({
 
 async function runChain(name: string, user: Ctx['user'] = VIEWER) {
   const middlewares = procedures[name]._def.middlewares;
-  const input = { event: 'birthday2026', cosmetics: [] };
+  const input = {
+    event: 'birthday2026',
+    cosmetics: [],
+    entityType: 'Image',
+    entityId: 1,
+    team: 'Blue',
+  };
   const root = rootCtx(user);
   let i = 0;
   const step = async (ctx: Ctx): Promise<unknown> => {
@@ -166,6 +176,46 @@ describe.each(Object.entries(ROUTES))('event.%s gate', (name, serviceFn) => {
     Object.assign(access, { viewer: 'preview', signedOut: 'closed' });
     await runChain(name);
     expect(service[serviceFn]).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The gate's tests run every route through a mocked service, so pin what this one hands it.
+it('event.getWornHat asks the service about this content, for this viewer', async () => {
+  Object.assign(access, { viewer: 'preview', signedOut: 'closed' });
+  await runChain('getWornHat');
+  expect(service.getWornEventHat).toHaveBeenCalledWith(
+    expect.objectContaining({
+      event: 'birthday2026',
+      entityType: 'Image',
+      entityId: 1,
+      viewer: VIEWER,
+    })
+  );
+});
+
+// Points are live totals: the popover's response is short-lived at the edge, and a response that
+// fell back to the snapshot because the live store was unreachable is not cached at all, so one
+// sysRedis blip is never served to everyone.
+describe.each([
+  ['getWornHat', 'getWornEventHat', 60],
+  ['getStandings', 'getEventStandings', 180],
+  // Settled from the same sysRedis snapshot: zeros from a missing or unreachable one are not cached.
+  ['getTeamScores', 'getTeamScores', 60],
+  ['getTeamScoreHistory', 'getTeamScoreHistory', 60],
+  ['getCosmeticScores', 'getEventCosmeticScores', 180],
+] as const)('event.%s live points caching', (name, serviceFn, ttl) => {
+  beforeEach(() => Object.assign(access, { viewer: 'open', signedOut: 'open' }));
+
+  it(`caches a live answer for ${ttl}s`, async () => {
+    expect((await runChain(name)).root.cache.edgeTTL).toBe(ttl);
+  });
+
+  it('does not cache an answer that fell back to the snapshot', async () => {
+    service[serviceFn].mockImplementationOnce(async (opts: unknown) => {
+      (opts as { onDegraded?: () => void }).onDegraded?.();
+      return { ok: 1 };
+    });
+    expect(willEdgeCache((await runChain(name)).root.cache)).toBe(false);
   });
 });
 

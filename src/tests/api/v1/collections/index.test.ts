@@ -9,6 +9,15 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
 
+type TestUser = { id: number; isModerator?: boolean; username?: string };
+type TestRequest = NextApiRequest & { user?: TestUser };
+type TestHandler = (
+  req: NextApiRequest,
+  res: NextApiResponse,
+  user: TestUser | undefined
+) => unknown;
+type TestResponseBody = Record<string, unknown> & { items: Record<string, unknown>[] };
+
 const {
   mockGetAllCollections,
   mockGetCollectionItemCount,
@@ -45,8 +54,9 @@ vi.mock('~/client-utils/edge-url', () => ({
 }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  MixedAuthEndpoint: (handler: any) => (req: any, res: any) => handler(req, res, req.user),
-  handleEndpointError: (res: any, e: any) => {
+  MixedAuthEndpoint: (handler: TestHandler) => (req: TestRequest, res: NextApiResponse) =>
+    handler(req, res, req.user),
+  handleEndpointError: (res: NextApiResponse, e: unknown) => {
     if (e instanceof TRPCError) {
       const status = getHTTPStatusCodeFromError(e);
       let body: unknown;
@@ -61,6 +71,9 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   },
 }));
 
+// Region resolver kept deterministic — the maturity clamp is derived ONLY from
+// these helpers (never from the caller). Default: not restricted → PUBLIC flag.
+// Individual tests flip `mockIsRegionRestricted` to exercise the SFW narrowing.
 vi.mock('~/server/utils/region-blocking', () => ({
   getRegion: mockGetRegion,
   isRegionRestricted: mockIsRegionRestricted,
@@ -72,7 +85,7 @@ import detailHandler from '~/pages/api/v1/collections/[id]';
 type CoverFixture = {
   id: number;
   url: string;
-  type: MediaType;
+  type: MediaType | null;
   width: number | null;
   height: number | null;
   nsfwLevel: number;
@@ -81,6 +94,8 @@ type CoverFixture = {
   tosViolation: boolean;
   needsReview: string | null;
   blockedFor: string | null;
+  poi: boolean;
+  minor: boolean;
 };
 
 function createCover(overrides: Partial<CoverFixture> = {}): CoverFixture {
@@ -96,6 +111,8 @@ function createCover(overrides: Partial<CoverFixture> = {}): CoverFixture {
     tosViolation: false,
     needsReview: null,
     blockedFor: null,
+    poi: false,
+    minor: false,
     ...overrides,
   };
 }
@@ -105,10 +122,10 @@ function createMocks({
   user,
 }: {
   query?: Record<string, string | string[]>;
-  user?: { id: number; isModerator?: boolean; username?: string };
+  user?: TestUser;
 }) {
   let statusCode = 200;
-  let payload: any = undefined;
+  let payload: unknown = undefined;
   const headers: Record<string, string> = {};
 
   const req = {
@@ -117,7 +134,7 @@ function createMocks({
     url: '/api/v1/collections',
     query,
     user,
-  } as unknown as NextApiRequest & { user?: any };
+  } as unknown as TestRequest;
 
   const res = {
     headersSent: false,
@@ -129,7 +146,7 @@ function createMocks({
       statusCode = code;
       return res;
     },
-    json(body: any) {
+    json(body: unknown) {
       payload = body;
       return res;
     },
@@ -137,11 +154,11 @@ function createMocks({
       return res;
     },
     _getStatusCode: () => statusCode,
-    _getJSONData: () => payload,
+    _getJSONData: () => payload as TestResponseBody,
     _getHeader: (name: string) => headers[name.toLowerCase()],
   } as unknown as NextApiResponse & {
     _getStatusCode: () => number;
-    _getJSONData: () => any;
+    _getJSONData: () => TestResponseBody;
     _getHeader: (name: string) => string | undefined;
   };
 
@@ -459,41 +476,6 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
     expect(res._getJSONData().mode).toBe(mode);
   });
 
-  it.each([
-    { ingestion: ImageIngestionStatus.Pending },
-    { ingestion: ImageIngestionStatus.Rescan },
-    { ingestion: ImageIngestionStatus.Blocked },
-    { scannedAt: null },
-    { nsfwLevel: 0 },
-    { nsfwLevel: NsfwLevel.Blocked },
-    { nsfwLevel: NsfwLevel.PG | NsfwLevel.Blocked },
-    { nsfwLevel: NsfwLevel.R },
-    { needsReview: 'review' },
-    { needsReview: '' },
-    { tosViolation: true },
-    { blockedFor: 'blocked' },
-    { blockedFor: '' },
-    { type: MediaType.audio },
-  ])('withholds covers that fail public media checks: %o', async (override) => {
-    mockGetUserCollectionPermissionsById.mockResolvedValue({ read: true });
-    mockGetCollectionById.mockResolvedValue({
-      id: 55,
-      name: 'Examples',
-      nsfwLevel: NsfwLevel.PG,
-      read: CollectionReadConfiguration.Public,
-      userId: 2,
-      tags: [],
-      image: createCover(override),
-    });
-    const { req, res } = createMocks({ query: { id: '55' } });
-
-    await detailHandler(req, res);
-
-    expect(res._getStatusCode()).toBe(200);
-    expect(res._getJSONData()).toMatchObject({ coverImage: null, coverImageUrl: null });
-    expect(mockGetEdgeUrl).not.toHaveBeenCalled();
-  });
-
   it('returns video metadata without changing the legacy media URL convention', async () => {
     mockGetUserCollectionPermissionsById.mockResolvedValue({ read: true });
     mockGetCollectionById.mockResolvedValue({
@@ -574,3 +556,123 @@ describe('GET /api/v1/collections/[id] (detail)', () => {
     expect(mockGetUserCollectionPermissionsById).not.toHaveBeenCalled();
   });
 });
+
+describe.each(['list', 'detail'] as const)('public collection cover checks (%s)', (endpoint) => {
+  async function requestCover(image: CoverFixture | null) {
+    const collection = {
+      id: 55,
+      name: 'Examples',
+      nsfwLevel: NsfwLevel.PG,
+      read: CollectionReadConfiguration.Public,
+      userId: 2,
+      tags: [],
+      image,
+    };
+    mockGetAllCollections.mockResolvedValue([collection]);
+    mockGetUserCollectionPermissionsById.mockResolvedValue({ read: true });
+    mockGetCollectionById.mockResolvedValue(collection);
+    const { req, res } = createMocks({ query: endpoint === 'list' ? {} : { id: '55' } });
+
+    await (endpoint === 'list' ? listHandler : detailHandler)(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    const body = res._getJSONData();
+    const item = endpoint === 'list' ? body.items[0] : body;
+    expect(item.id).toBe(55);
+    if (endpoint === 'list') expect(body.items).toHaveLength(1);
+    return item;
+  }
+
+  it.each([
+    { ingestion: ImageIngestionStatus.Pending },
+    { ingestion: ImageIngestionStatus.Rescan },
+    { ingestion: ImageIngestionStatus.Blocked },
+    { scannedAt: null },
+    { nsfwLevel: 0 },
+    { nsfwLevel: NsfwLevel.Blocked },
+    { nsfwLevel: NsfwLevel.PG | NsfwLevel.Blocked },
+    { nsfwLevel: NsfwLevel.R },
+    { needsReview: 'review' },
+    { needsReview: '' },
+    { tosViolation: true },
+    { blockedFor: 'blocked' },
+    { blockedFor: '' },
+    { poi: true },
+    { minor: true },
+    { type: MediaType.audio },
+    { type: null },
+    { url: '' },
+  ])('withholds ineligible covers without hiding the collection: %o', async (override) => {
+    const item = await requestCover(createCover(override));
+
+    expect(item.coverImageUrl).toBeNull();
+    if (endpoint === 'detail') expect(item.coverImage).toBeNull();
+    expect(mockGetEdgeUrl).not.toHaveBeenCalled();
+  });
+
+  it.each([MediaType.image, MediaType.video])('keeps eligible %s covers', async (type) => {
+    const item = await requestCover(createCover({ type }));
+
+    expect(item.coverImageUrl).toBe('edge:img-key');
+    expect(mockGetEdgeUrl.mock.calls).toEqual([['img-key', { width: 450, type }]]);
+  });
+
+  it('keeps the collection when its cover image is missing', async () => {
+    const item = await requestCover(null);
+
+    expect(item.coverImageUrl).toBeNull();
+    if (endpoint === 'detail') expect(item.coverImage).toBeNull();
+    expect(mockGetEdgeUrl).not.toHaveBeenCalled();
+  });
+});
+
+it('selects every public cover eligibility field in the list query', async () => {
+  mockGetAllCollections.mockResolvedValue([]);
+  const { req, res } = createMocks({ query: {} });
+
+  await listHandler(req, res);
+
+  expect(mockGetAllCollections.mock.calls[0][0].select.image).toMatchObject({
+    select: {
+      url: true,
+      type: true,
+      nsfwLevel: true,
+      ingestion: true,
+      scannedAt: true,
+      tosViolation: true,
+      needsReview: true,
+      blockedFor: true,
+      poi: true,
+      minor: true,
+    },
+  });
+});
+
+it.each([
+  { nsfw: 'true', restricted: false, rating: NsfwLevel.R, shown: true },
+  { nsfw: 'true', restricted: true, rating: NsfwLevel.R, shown: false },
+  { nsfw: 'false', restricted: false, rating: NsfwLevel.PG13, shown: false },
+  { nsfw: 'false', restricted: true, rating: NsfwLevel.PG13, shown: true },
+])(
+  'preserves list browsing and regional ceilings: %o',
+  async ({ nsfw, restricted, rating, shown }) => {
+    mockIsRegionRestricted.mockReturnValue(restricted);
+    mockGetAllCollections.mockResolvedValue([
+      {
+        id: 55,
+        name: 'Examples',
+        read: CollectionReadConfiguration.Public,
+        nsfwLevel: 0,
+        userId: 2,
+        image: createCover({ nsfwLevel: rating }),
+      },
+    ]);
+    const { req, res } = createMocks({ query: { nsfw } });
+
+    await listHandler(req, res);
+
+    const items = res._getJSONData().items;
+    expect(items).toHaveLength(1);
+    expect(items[0].coverImageUrl).toBe(shown ? 'edge:img-key' : null);
+  }
+);

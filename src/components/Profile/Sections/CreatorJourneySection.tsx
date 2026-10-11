@@ -1,6 +1,7 @@
 import { Button, Text } from '@mantine/core';
 import clsx from 'clsx';
 import { IconArrowRight, IconTrophy } from '@tabler/icons-react';
+import { sortEarnedBadges } from '~/components/CreatorJourney/badge-order';
 import { AchievementGrid, ProfileTierCard } from '~/components/CreatorJourney/ProfileAchievements';
 import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -8,14 +9,15 @@ import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import { ProfileSection } from '~/components/Profile/ProfileSection';
 import classes from '~/components/Profile/ProfileSection.module.css';
 
-const LATEST_ACHIEVEMENTS = 6;
+// One desktop row.
+const LATEST_ACHIEVEMENTS = 5;
 
 export const CreatorJourneySection = ({ user }: ProfileSectionProps) => {
   const { data, count } = useProfileAchievements(user.id);
   if (!data || count === 0) return null;
 
   const tier = data.tiers.at(-1);
-  const latest = data.achievements.slice(0, LATEST_ACHIEVEMENTS);
+  const latest = sortEarnedBadges(data.achievements).slice(0, LATEST_ACHIEVEMENTS);
 
   return (
     <div className={classes.profileSection}>
@@ -42,11 +44,14 @@ export const CreatorJourneySection = ({ user }: ProfileSectionProps) => {
         >
           {tier && <ProfileTierCard tier={tier} userId={user.id} />}
           {latest.length > 0 && (
-            <div className="flex min-w-0 flex-col gap-2">
+            <div className="flex min-w-0 flex-col gap-2 @container">
               <Text size="sm" fw={600} c="dimmed">
                 Latest achievements
               </Text>
-              <AchievementGrid achievements={latest} cols={{ base: 2, sm: 3 }} />
+              <AchievementGrid
+                achievements={latest}
+                className="grid grid-cols-2 gap-3 @[480px]:grid-cols-3 @[760px]:grid-cols-5"
+              />
             </div>
           )}
         </div>

@@ -6,6 +6,7 @@ import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAc
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { parseMilestoneShareToken } from '~/shared/constants/creator-journey.constants';
 import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
@@ -49,7 +50,11 @@ function AchievementsPage() {
 
   return (
     <div className="py-6">
-      <ProfileAchievementsList data={data} />
+      <ProfileAchievementsList
+        data={data}
+        userId={user.id}
+        spotlight={parseMilestoneShareToken(router.query.milestone)}
+      />
     </div>
   );
 }
