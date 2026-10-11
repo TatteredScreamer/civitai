@@ -24,6 +24,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     'cosmeticShop.getShop': { useQuery: () => ({ data: [], isLoading: false }) },
   }),
 }));
+// The site's Buzz colour: yellow on civitai.com, green on the green site.
+const buzzType = 'yellow';
+vi.mock('~/components/Buzz/useAvailableBuzz', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useAvailableBuzz: () => [buzzType],
+}));
 vi.mock('@mantine/core', async (importOriginal) => ({
   ...(await importOriginal<typeof MantineCore>()),
   Modal: () => null,
@@ -153,8 +159,16 @@ describe('hero team block (A6)', () => {
     const el = hero({ team: 'Blue', rank: 2, teamPoints: 10512, points: 140 });
     const block = el.querySelector('[data-testid="hero-team"]') as HTMLElement;
     expect(srcs(block)).toEqual(['hat-blue']);
-    expect(block.textContent).toBe("You're onTeam Blue#2Rank10512Team points140Your hats");
+    expect(block.textContent).toBe("You're onTeam BlueRank#2Team points10512Your hats140");
     expect(el.textContent).not.toContain('Join and get your free hat');
+  });
+
+  // Ellie review (2026-10-09): a medium-opacity background, so the hero art doesn't show through.
+  it('sits on its own part-transparent background over the hero art', () => {
+    const block = hero({ team: 'Blue' }).querySelector('[data-testid="hero-team"]') as HTMLElement;
+    expect(block.className.split(' ')).toEqual(
+      expect.arrayContaining(['bg-gray-1/80', 'dark:bg-dark-7/70', 'backdrop-blur-sm'])
+    );
   });
 
   // Positive control for the negative above: the same hero without a team offers the join.
@@ -238,7 +252,7 @@ const spotlights = (el: HTMLElement) =>
 
 describe('spotlight only where you can act (A9)', () => {
   it('the rules, steps and prize render as plain cards', () => {
-    const rules = { reactionWeight: 5, viewerOwnerDailyCap: 3, newAccountDays: 7 };
+    const rules = { reactionWeight: 5, pointsCapPerDay: 3, newAccountDays: 7 };
     const el = render(React.createElement(EventRules, { data: eventData({ rules }) }));
     expect(el.textContent).toContain('How points add up');
     expect(el.textContent).toContain('Champion badge');

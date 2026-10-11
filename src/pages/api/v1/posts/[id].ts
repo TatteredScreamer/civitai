@@ -22,6 +22,21 @@ import { Flags } from '~/shared/utils/flags';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 
+/**
+ * GET /api/v1/posts/[id] — public, edge-cacheable post with its images.
+ *
+ * Always evaluated as anonymous, so the response is a function of id + region only and the
+ * `MixedAuthEndpoint` public cache stays leak-free. Maturity follows `/api/v1/model-versions/[id]`:
+ * any browsable level is served (never unscanned or Blocked-only), except in a restricted region,
+ * where a post with any non-SFW level is a 404. The 404 is answered here, not by
+ * `handleEndpointError`, so the edge can absorb it. Images are the `/api/v1/images` items for the
+ * post at the same ceiling, the first 100 in the post's own order, so an image the viewer may not
+ * see is simply absent.
+ *
+ * Published + scanned is re-checked here rather than trusted from `getPostDetail`, whose
+ * collection-judge branch can return posts that are neither.
+ */
+
 export const schema = z.object({ id: z.coerce.number().int().gt(0).lte(2147483647) });
 
 const servedAvailability = new Set<Availability>([Availability.Public, Availability.Unsearchable]);
@@ -52,7 +67,6 @@ export default MixedAuthEndpoint(async function handler(
 
   let releaseSlot: (() => void) | undefined;
   try {
-    // @ai: Read as an anonymous visitor so cached data does not depend on who requested it.
     const post = await getPostDetail({ id });
 
     const restricted = isRegionRestricted(getRegion(req));
@@ -61,7 +75,6 @@ export default MixedAuthEndpoint(async function handler(
     const browsable = restricted
       ? !!post.nsfwLevel && Flags.hasFlag(sfwBrowsingLevelsFlag, post.nsfwLevel)
       : Flags.intersects(post.nsfwLevel, allBrowsingLevelsFlag);
-    // @ai: getPostDetail also serves collection judges, who can see unpublished or unscanned posts.
     if (!published || !browsable || !servedAvailability.has(post.availability)) return notFound();
 
     try {

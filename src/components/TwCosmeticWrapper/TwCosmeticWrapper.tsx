@@ -7,6 +7,7 @@ import {
   getEventDecorationClearLeftCss,
   HAT_PLAIN_CARD_NUDGE,
 } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
+import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
 import type { EventDecorationData } from '~/shared/constants/event-decoration.constants';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
 
@@ -30,12 +31,18 @@ export function TwCosmeticWrapper({
   className,
   cosmetic,
   eventDecoration,
+  eventDecorationOn,
+  cardWidth,
   style,
   ...props
 }: Omit<React.HTMLProps<HTMLDivElement>, 'children'> & {
   cosmetic?: Cosmetic;
   /** Worn beside the frame. Drawn outside the card, which would crop it. */
   eventDecoration?: EventDecorationData | null;
+  /** The content wearing the event decoration, so a click on it can open its stats. */
+  eventDecorationOn?: EventDecorationEntity;
+  /** The card's width in px, for a card narrower than a feed card: the hat shrinks to match. */
+  cardWidth?: number;
   children: React.ReactElement;
 }) {
   const styleRef = useRef<Record<string, unknown> | undefined>();
@@ -71,7 +78,8 @@ export function TwCosmeticWrapper({
           '--event-decoration-clear-left': getEventDecorationClearLeftCss(
             eventDecoration,
             undefined,
-            padded ? 0 : HAT_PLAIN_CARD_NUDGE
+            padded ? 0 : HAT_PLAIN_CARD_NUDGE,
+            cardWidth
           ),
         }),
         ...style,
@@ -93,7 +101,14 @@ export function TwCosmeticWrapper({
     >
       {hasFrame && <CosmeticLights cosmetic={cosmetic as any} />}
       {children}
-      {eventDecoration && <EventDecorationOverlay decoration={eventDecoration} framed={padded} />}
+      {eventDecoration && (
+        <EventDecorationOverlay
+          decoration={eventDecoration}
+          framed={padded}
+          cardWidth={cardWidth}
+          wornOn={eventDecorationOn}
+        />
+      )}
     </div>
   );
 }
